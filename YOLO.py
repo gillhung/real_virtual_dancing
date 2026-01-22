@@ -2,27 +2,59 @@ from ultralytics import YOLO
 import os
 import json
 
-# 加載 YOLOv8 Pose 模型
-model = YOLO("yolov8n-pose.pt")
+MODEL_PATH = "yolov8n-pose.pt"
+IMAGE_DIR = "dataset/images"
+OUT_DIR = "annotations/yolo_boxes"
+CONF_TH = 0.3
+BBOX_EXPAND = 1.25
 
-image_dir = "dataset/images"
-output_json = "annotations/yolo_bboxes.json"
-os.makedirs("annotations", exist_ok=True)
+os.makedirs(OUT_DIR, exist_ok=True)
+model = YOLO(MODEL_PATH)
 
-results_dict = {}
 
-for img_name in os.listdir(image_dir):
-    img_path = os.path.join(image_dir, img_name)
+def expand_bbox(bbox, scale=1.25):
+    x1, y1, x2, y2 = bbox
+    cx, cy = (x1 + x2) / 2, (y1 + y2) / 2
+    w, h = (x2 - x1) * scale, (y2 - y1) * scale
+    return [
+        max(cx - w / 2, 0),
+        max(cy - h / 2, 0),
+        cx + w / 2,
+        cy + h / 2
+    ]
+
+
+for img_name in os.listdir(IMAGE_DIR):
+    if not img_name.lower().endswith((".jpg", ".png")):
+        continue
+
+    img_path = os.path.join(IMAGE_DIR, img_name)
     results = model.predict(source=img_path, save=False, verbose=False)
 
     bboxes = []
+
     for r in results:
-        for box in r.boxes.xyxy:  # xyxy = [x1,y1,x2,y2]
-            bboxes.append(box.tolist())
-    results_dict[img_name] = bboxes
+        if r.boxes is None:
+            continue
 
-# 存成 JSON
-with open(output_json, "w") as f:
-    json.dump(results_dict, f)
+        for box, cls, conf in zip(
+            r.boxes.xyxy,
+            r.boxes.cls,
+            r.boxes.conf
+        ):
+            if int(cls) != 0:        # person class
+                continue
+            if conf < CONF_TH:
+                continue
 
-print(f"YOLO 偵測完成，結果存到 {output_json}")
+            bbox = box.tolist()
+            bbox = expand_bbox(bbox, BBOX_EXPAND)
+            bboxes.append(bbox)
+
+    out_path = os.path.join(
+        OUT_DIR, img_name.replace(".jpg", ".json")
+    )
+    with open(out_path, "w") as f:
+        json.dump(bboxes, f)
+
+    print(f"{img_name}: {len(bboxes)} persons")
